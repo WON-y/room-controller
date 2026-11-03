@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Smart Room Controller</title>
+<style>
+  :root { --bg:#f4f6f8; --panel:#fff; --fg:#1d2733; --mute:#6b7a89; --line:#e3e8ee; --code:#0f172a; --codefg:#e2e8f0;
+          --calm:#10b981; --noisy:#f59e0b; --stuffy:#ef4444; --okbg:#d1fae5; --okfg:#065f46; --badbg:#fee2e2; --badfg:#991b1b; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f141a; --panel:#18202a; --fg:#e6edf3; --mute:#8b98a5; --line:#2a3542; --code:#0b1016; --codefg:#d6dee6;
+            --okbg:#064e3b; --okfg:#a7f3d0; --badbg:#5b1a1a; --badfg:#fecaca; }
+  }
+  * { box-sizing:border-box } body { margin:0; background:var(--bg); color:var(--fg); font-family:system-ui,sans-serif }
+  header { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:12px 16px; background:var(--panel); border-bottom:1px solid var(--line) }
+  header h1 { font-size:18px; margin:0; margin-right:auto }
+  .badge { padding:2px 10px; border-radius:10px; font-size:12px; background:var(--line) }
+  .on { background:var(--okbg); color:var(--okfg) } .off { background:var(--badbg); color:var(--badfg) }
+  main { display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; padding:16px; max-width:1200px; margin:auto }
+  @media (max-width:900px){ main{ grid-template-columns:1fr } }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px; min-width:0 }
+  .wide { grid-column:1 / -1 }
+  .k { color:var(--mute); font-size:12px } .v { font-size:28px; font-variant-numeric:tabular-nums }
+  #label { font-size:44px; font-weight:700; text-transform:uppercase }
+  .bar { display:flex; align-items:center; gap:8px; margin:6px 0; font-size:13px }
+  .bar div.track { flex:1; height:10px; background:var(--line); border-radius:5px; overflow:hidden }
+  .bar div.fill { height:100% }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:12px }
+  .row { display:flex; align-items:center; gap:8px; flex-wrap:wrap }
+  button { background:var(--panel); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:6px 12px; cursor:pointer }
+  button.sel { background:var(--fg); color:var(--panel) }
+  .tablewrap { overflow-x:auto }
+  table { width:100%; font-size:13px; border-collapse:collapse } td,th { padding:6px; border-bottom:1px solid var(--line); text-align:left; white-space:nowrap }
+  #serial { background:var(--code); color:var(--codefg); font:12px/1.5 ui-monospace,Consolas,monospace; height:260px; overflow:auto;
+            border-radius:8px; padding:10px; margin-top:8px; white-space:pre-wrap; word-break:break-all }
+  #serial .t { color:#64748b } #serial .err { color:#f87171 } #serial .ok { color:#4ade80 } #serial .br { color:#60a5fa }
+  .warn { color:var(--stuffy); font-size:12px; margin-top:6px }
+</style>
+</head>
+<body>
+<header>
+  <h1>스마트 룸 컨트롤러</h1>
+  <span class="badge" id="model">model: -</span>
+  <span class="badge off" id="supabase">Supabase -</span>
+  <span class="badge off" id="online">ESP32 offline</span>
+</header>
+<main>
+  <section class="panel">
+    <div class="k">현재 방 상태 (ESP32 추론)</div>
+    <div id="label">-</div>
+    <div class="k" id="conf">신뢰도 -</div>
+    <div id="probs" style="margin-top:12px"></div>
+    <div class="k" id="anomaly"></div>
+  </section>
+
+  <section class="panel">
+    <div class="grid2">
+      <div><div class="k">온도 (°C)</div><div class="v" id="temp">-</div></div>
+      <div><div class="k">습도 (%)</div><div class="v" id="hum">-</div></div>
+      <div><div class="k">소리 감지 (최근 3초)</div><div class="v" id="snd">-</div></div>
+      <div><div class="k">서보 제어</div><div class="v" id="ctrl" style="font-size:20px">-</div></div>
+    </div>
+    <div class="warn" id="dhtWarn" hidden>온도·습도가 0 → DHT11 읽기 실패 (배선/전원 확인)</div>
+  </section>
+
+  <section class="panel">
+    <div class="k">환기구 (서보)</div>
+    <svg viewBox="0 0 200 110" width="100%" height="140">
+      <path d="M20 100 A80 80 0 0 1 180 100" fill="none" stroke="var(--line)" stroke-width="10"/>
+      <line id="arm" x1="100" y1="100" x2="20" y2="100" stroke="var(--fg)" stroke-width="6" stroke-linecap="round"
+            style="transition:all .4s"/>
+      <circle cx="100" cy="100" r="8" fill="var(--fg)"/>
+    </svg>
+    <div class="v" id="angle" style="text-align:center">-°</div>
+    <div class="k" style="margin-top:8px">수동 조작</div>
+    <div id="ovr" class="row" style="margin-top:4px"></div>
+  </section>
+
+  <section class="panel wide">
+    <div class="row">
+      <h3 style="margin:0">시리얼 로그</h3>
+      <span class="k">ESP32 USB 출력 (tools/serial_bridge.py 실행 중일 때)</span>
+      <label class="k" style="margin-left:auto"><input type="checkbox" id="showTelem"> telemetry JSON 줄 포함</label>
+      <label class="k"><input type="checkbox" id="follow" checked> 자동 스크롤</label>
+      <button onclick="$('serial').innerHTML=''">지우기</button>
+    </div>
+    <div id="serial"></div>
+  </section>
+
+  <section class="panel wide">
+    <div class="row">
+      <h3 style="margin:0">DB 이벤트 로그</h3><span class="k" id="logMsg"></span>
+      <button style="margin-left:auto" onclick="loadEvents()">새로고침</button>
+    </div>
+    <div class="tablewrap">
+    <table><thead><tr><th>시각</th><th>사유</th><th>상태</th><th>신뢰도</th><th>온/습도</th><th>소리</th><th>제어</th><th>서보</th><th>Supabase</th></tr></thead>
+    <tbody id="events"></tbody></table>
+    </div>
+  </section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const LABELS = ['calm','noisy','stuffy'];
+const KO = {calm:'쾌적', noisy:'소음/활동', stuffy:'환기 필요'};
+const CTRL = {auto:'자동 (AI)', dashboard:'대시보드 수동', joystick:'조이스틱 수동'};
+const color = l => `var(--${l})`;
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let ws;
+
+function connect() {
+  ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/ui`);
+  ws.onmessage = e => { const m = JSON.parse(e.data);
+    if (m.type === 'telemetry') render(m);
+    else if (m.type === 'status') status(m);
+    else if (m.type === 'serial') serial(m.items);
+    else if (m.type === 'log_saved') { $('logMsg').textContent = m.result.synced ? 'Supabase 저장됨' : `로컬 저장 (${m.result.detail || m.result.error || ''})`; loadEvents(); } };
+  ws.onclose = () => setTimeout(connect, 1000);
+}
+
+let lastSeen = 0;
+setInterval(() => setOnline(Date.now() - lastSeen < 5000), 1000);
+function setOnline(on) { $('online').textContent = on ? 'ESP32 online' : 'ESP32 offline'; $('online').className = 'badge ' + (on ? 'on' : 'off'); }
+
+function render(t) {
+  lastSeen = Date.now(); setOnline(true);
+  $('model').textContent = `model: ${t.model}`;
+  $('label').textContent = KO[t.label] || t.label; $('label').style.color = color(t.label);
+  $('conf').textContent = `신뢰도 ${(t.confidence*100).toFixed(0)}%` + (t.raw_label && t.raw_label !== t.label ? ` · 원시 예측 ${KO[t.raw_label]}` : '');
+  $('probs').innerHTML = LABELS.map(l => `<div class="bar"><span style="width:80px">${KO[l]}</span>
+    <div class="track"><div class="fill" style="width:${((t.probs[l]||0)*100).toFixed(0)}%;background:${color(l)}"></div></div>
+    <span style="width:36px;text-align:right">${((t.probs[l]||0)*100).toFixed(0)}%</span></div>`).join('');
+  $('anomaly').textContent = t.anomaly ? `이상치 점수 ${t.anomaly.toFixed(2)}` : '';
+  $('temp').textContent = t.temp.toFixed(1); $('hum').textContent = t.hum.toFixed(0);
+  $('dhtWarn').hidden = !(t.temp === 0 && t.hum === 0);
+  $('ctrl').textContent = CTRL[t.control] || t.control; $('snd').textContent = `${(t.sound_rate*100).toFixed(0)}%`;
+  const a = t.servo_angle, rad = Math.PI - a / 180 * Math.PI;
+  $('arm').setAttribute('x2', 100 + 80 * Math.cos(rad)); $('arm').setAttribute('y2', 100 - 80 * Math.sin(rad));
+  $('angle').textContent = `${a}°` + (t.control !== 'auto' ? ` (AI 추천 ${t.auto_angle}°)` : '');
+}
+
+function serial(items) {
+  const box = $('serial'), showTelem = $('showTelem').checked;
+  const html = items.filter(it => showTelem || !it.line.startsWith('@{')).map(it => {
+    const time = new Date(it.t * 1000).toLocaleTimeString('ko-KR', {hour12:false});
+    const cls = /실패|error|fail|끊김/i.test(it.line) ? 'err' : it.line.startsWith('[bridge]') ? 'br' : /성공|연결됨/.test(it.line) ? 'ok' : '';
+    return `<div class="${cls}"><span class="t">${time}</span> ${esc(it.line)}</div>`;
+  }).join('');
+  box.insertAdjacentHTML('beforeend', html);
+  while (box.childElementCount > 500) box.firstElementChild.remove();
+  if ($('follow').checked) box.scrollTop = box.scrollHeight;
+}
+
+function status(s) {
+  const opts = [['자동', null], ['0°', 0], ['45°', 45], ['90°', 90], ['180°', 180]];
+  $('ovr').innerHTML = opts.map(([n, v]) => `<button class="${s.override === v ? 'sel' : ''}" onclick='override(${JSON.stringify(v)})'>${n}</button>`).join('');
+}
+async function override(angle) {
+  const r = await fetch('/api/override', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({angle})}).then(r => r.json());
+  status(r);
+}
+
+async function loadEvents() {
+  const r = await fetch('/api/events').then(r => r.json()).catch(() => ({items:[]}));
+  $('events').innerHTML = (r.items || []).map(e => `<tr><td>${esc((e.created_at||'').replace('T',' ').slice(5,19))}</td>
+    <td>${esc(e.report)}</td><td style="color:${color(e.label)}">${esc(KO[e.label]||e.label)}</td><td>${(e.confidence*100).toFixed(0)}%</td>
+    <td>${e.temp.toFixed(1)}° / ${e.hum.toFixed(0)}%</td><td>${(e.sound_rate*100).toFixed(0)}%</td><td>${esc(e.control)}</td>
+    <td>${e.servo_angle}°</td><td>${e.synced ? '✓' : '-'}</td></tr>`).join('');
+}
+
+async function checkSupabase() {
+  const h = await fetch('/api/log-health').then(r => r.json()).catch(() => ({}));
+  const ok = h.ok && h.supabase;
+  $('supabase').textContent = ok ? 'Supabase 설정됨' : h.ok ? 'Supabase 미설정 (로컬만)' : 'log 서비스 연결 안 됨';
+  $('supabase').className = 'badge ' + (ok ? 'on' : 'off');
+}
+
+status({override: null}); connect(); loadEvents(); checkSupabase(); setInterval(checkSupabase, 30000);
+</script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+.env
+firmware/include/secrets.h
+firmware/.pio/
+__pycache__/
+*.db
+.pytest_cache/

@@ -1,0 +1,16 @@
+services:
+  comm:
+    build: ./services/comm
+    ports: ["${DASHBOARD_PORT:-8000}:8000"]   # 대시보드 + ESP32 telemetry 수신 (.env 의 DASHBOARD_PORT 로 변경 가능)
+    environment:
+      LOG_URL: http://log:8001
+    depends_on: [log]
+
+  log:
+    build: ./services/log
+    ports: ["${LOG_PORT:-8001}:8001"]
+    env_file: .env            # SUPABASE_URL, SUPABASE_KEY
+    volumes: ["log-data:/data"]
+
+volumes:
+  log-data:
