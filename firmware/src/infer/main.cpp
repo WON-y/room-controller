@@ -92,11 +92,11 @@ static Result classify() {
   return r;
 }
 
-static void buildTelemetry(JsonDocument& doc, const Result& r, int label, const char* report) {
+static void buildTelemetry(JsonDocument& doc, const Result& r, int label, float confidence, const char* report) {
   doc["device_id"] = WiFi.macAddress();
   doc["label"] = room::labelName(label);
   doc["raw_label"] = room::labelName(r.label);
-  doc["confidence"] = r.probs[label];
+  doc["confidence"] = confidence;
   JsonObject p = doc["probs"].to<JsonObject>();
   for (int i = 0; i < room::N_LABELS; ++i) p[room::labelName(i)] = r.probs[i];
   doc["anomaly"] = r.anomaly;
@@ -169,9 +169,12 @@ void loop() {
 
   if ((int32_t)(now - nextSample) >= 0) {
     nextSample = now + SAMPLE_INTERVAL_MS;
-    window[wIdx] = sensors.read();
-    wIdx = (wIdx + 1) % WINDOW_SAMPLES;
-    if (wCount < WINDOW_SAMPLES) ++wCount;
+    const Sample s = sensors.read();
+    if (sensors.ready()) {  // 첫 DHT 측정 전의 0 값이 윈도 평균에 섞이지 않게
+      window[wIdx] = s;
+      wIdx = (wIdx + 1) % WINDOW_SAMPLES;
+      if (wCount < WINDOW_SAMPLES) ++wCount;
+    }
   }
 
   // 서보는 조이스틱 반응을 위해 20 Hz 로 갱신
@@ -183,14 +186,15 @@ void loop() {
   if (wCount == WINDOW_SAMPLES && (int32_t)(now - nextInfer) >= 0) {
     nextInfer = now + 1000;
     const Result r = classify();
-    const int label = smoother.push(r.label);
+    const int label = smoother.push(r.label, r.probs);
+    const float confidence = smoother.confidence(label);
     autoAngle = room::servoAngleFor(label);
     const char* report = reporter.check(label, now);
     Serial.printf("[%s] %s (%.0f%%) T=%.1f H=%.0f snd=%.2f servo=%d(%s) %s\n", MODEL_NAME, room::labelName(label),
-                  r.probs[label] * 100, r.feat.temp, r.feat.hum, r.feat.soundRate, sensors.servoAngle(),
+                  confidence * 100, r.feat.temp, r.feat.hum, r.feat.soundRate, sensors.servoAngle(),
                   room::controlName(servo.control()), report ? report : "");
     JsonDocument doc;
-    buildTelemetry(doc, r, label, report);
+    buildTelemetry(doc, r, label, confidence, report);
     serialTelemetry(doc);
     postTelemetry(doc);
   }

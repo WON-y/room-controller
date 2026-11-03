@@ -23,6 +23,18 @@ void test_smoother_majority() {
   TEST_ASSERT_EQUAL(NOISY, s.push(NOISY));  // 두 번 연속이면 반영
 }
 
+void test_smoother_confidence() {
+  // 상태가 막 바뀐 시점에도 신뢰도는 표시 라벨 기준이어야 함 (예전엔 원시 예측 기준이라 10% 로 찍힘)
+  const float calm[N_LABELS] = {0.8f, 0.1f, 0.1f};
+  const float noisy[N_LABELS] = {0.1f, 0.8f, 0.1f};
+  Smoother s;
+  s.push(NOISY, noisy);
+  s.push(NOISY, noisy);
+  TEST_ASSERT_EQUAL(NOISY, s.push(CALM, calm));          // 다수결은 여전히 noisy
+  TEST_ASSERT_FLOAT_WITHIN(1e-4, (0.8f + 0.8f + 0.1f) / 3, s.confidence(NOISY));
+  TEST_ASSERT_FLOAT_WITHIN(1e-4, 0.0f, Smoother().confidence(CALM));  // 빈 상태
+}
+
 void test_reporter() {
   Reporter r(60000);
   TEST_ASSERT_EQUAL_STRING("change", r.check(CALM, 1000));
@@ -51,6 +63,8 @@ void test_rule_classifier() {
   float p[N_LABELS];
   TEST_ASSERT_EQUAL(CALM, ruleClassify({23, 45, 0.0f}, p));
   TEST_ASSERT_EQUAL(NOISY, ruleClassify({23, 45, 0.4f}, p));
+  TEST_ASSERT_EQUAL(NOISY, ruleClassify({23, 45, 0.10f}, p));  // 기준값 경계
+  TEST_ASSERT_EQUAL(CALM, ruleClassify({23, 45, 0.07f}, p));
   TEST_ASSERT_EQUAL(STUFFY, ruleClassify({29, 75, 0.1f}, p));
 }
 
@@ -58,6 +72,7 @@ int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_labels_and_servo);
   RUN_TEST(test_smoother_majority);
+  RUN_TEST(test_smoother_confidence);
   RUN_TEST(test_reporter);
   RUN_TEST(test_servo_controller);
   RUN_TEST(test_rule_classifier);

@@ -19,8 +19,8 @@ class Sensors {
     pinMode(PIN_JOY_SW, INPUT_PULLUP);
     // 사운드 DO 펄스는 매우 짧아서 폴링하면 놓친다 → 인터럽트로 래치
     attachInterrupt(digitalPinToInterrupt(PIN_SOUND), onSound, CHANGE);
-    // 서보: LEDC 50 Hz, 16 bit (Arduino core 2.x API)
-    ledcSetup(kServoCh, 50, 16);
+    // 서보: LEDC 50 Hz, 14 bit (ESP32-S3 LEDC 최대 14 bit, Arduino core 2.x API)
+    ledcSetup(kServoCh, 50, kServoBits);
     ledcAttachPin(PIN_SERVO, kServoCh);
     joyCenter_ = analogRead(PIN_JOY_X);  // 부팅 시 스틱을 건드리지 않은 값 = 중앙
   }
@@ -31,8 +31,8 @@ class Sensors {
     if (lastDht_ == 0 || now - lastDht_ >= DHT_INTERVAL_MS) {
       const float t = dht_.readTemperature();
       const float h = dht_.readHumidity();
-      if (!isnan(t)) temp_ = t;  // 실패 시 직전 값 유지
-      if (!isnan(h)) hum_ = h;
+      if (!isnan(t)) { temp_ = t; hasTemp_ = true; }  // 실패 시 직전 값 유지
+      if (!isnan(h)) { hum_ = h; hasHum_ = true; }
       lastDht_ = now;
     }
     Sample s{temp_, hum_, soundFlag_ ? 1.0f : 0.0f};
@@ -62,16 +62,21 @@ class Sensors {
     angle = constrain(angle, 0, 180);
     if (angle == servoAngle_) return;
     const uint32_t us = map(angle, 0, 180, 500, 2400);  // SG90 펄스 폭
-    ledcWrite(kServoCh, (uint32_t)(us * 65535UL / 20000UL));
+    ledcWrite(kServoCh, (uint32_t)(us * ((1UL << kServoBits) - 1) / 20000UL));
     servoAngle_ = angle;
   }
   int servoAngle() const { return servoAngle_; }
 
+  // DHT 를 한 번이라도 읽기 전에는 temp/hum 이 초기값 0 → 이 값을 쓰면 안 됨
+  bool ready() const { return hasTemp_ && hasHum_; }
+
  private:
   static constexpr int kServoCh = 0;
+  static constexpr int kServoBits = 14;
   DHT dht_;
   float temp_ = 0, hum_ = 0;
   uint32_t lastDht_ = 0;
+  bool hasTemp_ = false, hasHum_ = false;
   int servoAngle_ = -1;
   int joyCenter_ = 2048;
   static volatile bool soundFlag_;

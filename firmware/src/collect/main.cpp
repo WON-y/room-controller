@@ -19,5 +19,6 @@ void loop() {
   if ((int32_t)(now - next) < 0) return;
   next = now + SAMPLE_INTERVAL_MS;
   const Sample s = sensors.read();
+  if (!sensors.ready()) return;  // 첫 DHT 측정 전의 0 값은 학습 데이터에 넣지 않음
   Serial.printf("%.1f,%.1f,%.0f\n", s.temp, s.hum, s.sound);
 }

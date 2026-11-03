@@ -17,8 +17,9 @@ int labelFromName(const char* name) {
 
 int servoAngleFor(int label) { return (label >= 0 && label < N_LABELS) ? kAngles[label] : 0; }
 
-int Smoother::push(int label) {
+int Smoother::push(int label, const float* probs) {
   hist_[idx_] = label;
+  for (int l = 0; l < N_LABELS; ++l) probs_[idx_][l] = probs ? probs[l] : (l == label ? 1.0f : 0.0f);
   idx_ = (idx_ + 1) % kSize;
   if (n_ < kSize) ++n_;
   int counts[N_LABELS] = {0};
@@ -28,6 +29,13 @@ int Smoother::push(int label) {
   for (int l = 0; l < N_LABELS; ++l)
     if (counts[l] > counts[best]) best = l;
   return best;
+}
+
+float Smoother::confidence(int label) const {
+  if (n_ == 0 || label < 0 || label >= N_LABELS) return 0.0f;
+  float sum = 0;
+  for (int i = 0; i < n_; ++i) sum += probs_[i][label];
+  return sum / n_;
 }
 
 const char* Reporter::check(int label, uint32_t nowMs) {
@@ -80,7 +88,7 @@ int ServoController::update(int autoAngle, float joyX, bool pressed, int dashboa
 int ruleClassify(const Features& f, float probs[N_LABELS]) {
   int l;
   if (f.hum >= 70.0f || f.temp >= 28.0f) l = STUFFY;
-  else if (f.soundRate >= 0.15f) l = NOISY;
+  else if (f.soundRate >= 0.10f) l = NOISY;  // 3초 중 0.3초 이상 소리 (박수 몇 번이면 넘음)
   else l = CALM;
   for (int i = 0; i < N_LABELS; ++i) probs[i] = (i == l) ? 0.8f : 0.1f;
   return l;

@@ -19,9 +19,13 @@ int servoAngleFor(int label);         // 환기구 개방 각도
 class Smoother {
  public:
   static constexpr int kSize = 3;
-  int push(int label);
+  // probs 를 주면 confidence() 계산에 사용 (nullptr 이면 해당 라벨 100% 로 간주)
+  int push(int label, const float* probs = nullptr);
+  // 다수결 라벨의 확률을 최근 예측들에 대해 평균 → 표시 라벨과 항상 일치하는 신뢰도
+  float confidence(int label) const;
  private:
   int hist_[kSize] = {0};
+  float probs_[kSize][N_LABELS] = {};
   int n_ = 0, idx_ = 0;
 };
 
